@@ -1,0 +1,10 @@
+{
+  "id": "let-it-colorful",
+  "name": "Let It Colorful",
+  "version": "1.0.0",
+  "minAppVersion": "1.15.1",
+  "description": "Apply and remove text and background colors using native HTML with customizable color palettes.",
+  "author": "jimmy C. Studio",
+  "isDesktopOnly": false,
+  "authorUrl": "https://github.com/catmanc"
+}
