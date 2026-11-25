@@ -45,21 +45,22 @@ class Palette extends Modal {
 }
 module.exports=class extends Plugin{
  async onload(){this.lastSelection=null;iconIds.forEach((id,i)=>addIcon(id,icons[i]));
- const capture=()=>{const view=this.app.workspace.getActiveViewOfType(MarkdownView);if(!view||!view.editor)return;const ed=view.editor, sel=view.containerEl.ownerDocument.getSelection();if(!sel||sel.isCollapsed||!sel.rangeCount||!view.containerEl.contains(sel.anchorNode)||!view.containerEl.contains(sel.focusNode))return;const text=sel.toString();if(!text)return;const doc=ed.getValue(), cm=ed.cm;let mapped=null;
+ const capture=()=>{const view=this.app.workspace.getActiveViewOfType(MarkdownView);if(!view||!view.editor){this.lastSelection=null;return;}const ed=view.editor, sel=view.containerEl.ownerDocument.getSelection();if(!sel||!sel.rangeCount||!view.containerEl.contains(sel.anchorNode)||!view.containerEl.contains(sel.focusNode))return;if(sel.isCollapsed){this.lastSelection=null;return;}const text=sel.toString();if(!text)return;const doc=ed.getValue(), cm=ed.cm;let mapped=null;
  try{const r=sel.getRangeAt(0);const element=n=>n.nodeType===1?n:n.parentElement;const span=element(r.startContainer).closest('span[style]');if(span&&span.contains(r.endContainer)&&cm&&typeof cm.posAtDOM==='function'){
  const prefix=r.cloneRange();prefix.selectNodeContents(span);prefix.setEnd(r.startContainer,r.startOffset);const offset=prefix.toString().length;const full=span.textContent;const pos=cm.posAtDOM(span);const matches=colorSpans(doc).filter(p=>p.start<=pos&&pos<=p.end&&p.text===full);if(matches.length===1){const p=matches[0];if(p.text.slice(offset,offset+text.length)===text)mapped={a:p.begin+offset,b:p.begin+offset+text.length};}}
  if(!mapped&&cm&&typeof cm.posAtDOM==='function'){const a=cm.posAtDOM(r.startContainer,r.startOffset),b=cm.posAtDOM(r.endContainer,r.endOffset);if(a<b&&doc.slice(a,b)===text)mapped={a,b};}
  }catch(e){console.debug('Let It Colorful: DOM mapping unavailable',e);}
- this.lastSelection={ed,doc,text,mapped};};
- this.registerDomEvent(document,'contextmenu',capture,true);this.registerDomEvent(document,'pointerdown',e=>{if(e.button===2)capture();},true);
- this.registerDomEvent(document,'selectionchange',capture);this.registerDomEvent(document,'pointerup',capture,true);this.registerDomEvent(document,'keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='p')capture();},true);
+ this.lastSelection={ed,doc,text,mapped,time:Date.now()};};
+ this.registerDomEvent(document,'contextmenu',capture,true);this.registerDomEvent(document,'pointerdown',e=>{if(e.button===2)capture();else if(e.target.closest?.('.cm-content'))this.lastSelection=null;},true);
+ this.registerDomEvent(document,'selectionchange',capture);this.registerDomEvent(document,'pointerup',capture,true);this.registerDomEvent(document,'keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='p')capture();else if(e.target.closest?.('.cm-content')&& !['Control','Meta','Shift','Alt'].includes(e.key))this.lastSelection=null;},true);
+ this.registerEvent(this.app.workspace.on('active-leaf-change',()=>{this.lastSelection=null;}));
  this.registerEvent(this.app.workspace.on('editor-menu',(menu,ed)=>{
  const cached=this.lastSelection;
- if(!ed.somethingSelected()&&!(cached&&cached.ed===ed&&cached.doc===ed.getValue()&&cached.text))return;
+ if(!ed.somethingSelected()&&!(cached&&cached.ed===ed&&cached.doc===ed.getValue()&&Date.now()-cached.time<15000&&cached.text))return;
  let target;try{target=this.target(ed);}catch(e){new Notice('Let It Colorful: '+e.message);return;}if(!target)return;
  const actions=[['Text color',iconIds[0],'color',false],['Highlight background',iconIds[1],'background-color',false],['Remove text color',iconIds[2],'color',true],['Remove background highlight',iconIds[3],'background-color',true],['Remove text and background color',iconIds[4],'both',true]];
  const addActions=(dest,prefix='')=>{for(const [name,icon,prop,remove] of actions)dest.addItem(item=>item.setTitle(prefix+name).setIcon(icon).onClick(()=>{const apply=c=>{if(ed.getValue()!==target.doc){new Notice('Document changed; try again.');return;}this.apply(ed,target.doc,target.a,target.b,prop,c);};if(remove)apply(null);else new Palette(this.app,this,c=>{if(valid(c))apply(c);},prop).open();}));};
- let submenu=false;menu.addItem(item=>{item.setTitle('Let It Colorful').setIcon('palette');if(typeof item.setSubmenu==='function'){const sub=item.setSubmenu();if(sub&&typeof sub.addItem==='function'){submenu=true;addActions(sub);}}if(!submenu)item.setDisabled(true);});if(!submenu)addActions(menu,'Let It Colorful: ');
+ menu.addSeparator();addActions(menu,'Let It Colorful: ');
  }));
  const saved=await this.loadData()||{};const legacy=cleanPalette(saved.colors,defaults.colors);this.settings={...saved,textColors:cleanPalette(saved.textColors,legacy),backgroundColors:cleanPalette(saved.backgroundColors,legacy)};this.addSettingTab(new PaletteSettings(this.app,this));
  for(const [id,name,prop,remove,icon] of [['text-color','Text color','color',false,iconIds[0]],['highlight','Highlight background','background-color',false,iconIds[1]],['remove-color','Remove text and background color','both',true,iconIds[4]],['remove-text-color','Remove text color','color',true,iconIds[2]],['remove-highlight','Remove background highlight','background-color',true,iconIds[3]]])this.addCommand({id,name,icon,callback:()=>this.run(prop,remove)});}
@@ -70,7 +71,7 @@ module.exports=class extends Plugin{
  const cached=this.lastSelection;this.lastSelection=null;
  const raw=doc.slice(a,b), visible=raw.replace(/<\/?span\b[^>]*>/gi,'');
  const touching=spans.filter(p=>p.start<=b&&p.end>=a);
- if(cached&&cached.ed===ed&&cached.doc===doc){if(cached.mapped)return {doc,...cached.mapped};if(a!==b&&visible===cached.text)return {doc,a,b};const candidates=[];for(const p of touching){let i=p.text.indexOf(cached.text);while(i>=0){candidates.push({doc,a:p.begin+i,b:p.begin+i+cached.text.length});i=p.text.indexOf(cached.text,i+1);}}if(candidates.length===1)return candidates[0];throw Error('Cannot map rendered selection uniquely. Select in Source mode.');}
+ if(cached&&cached.ed===ed&&cached.doc===doc&&Date.now()-cached.time<15000){if(cached.mapped)return {doc,...cached.mapped};if(a!==b&&visible===cached.text)return {doc,a,b};const candidates=[];for(const p of touching){let i=p.text.indexOf(cached.text);while(i>=0){candidates.push({doc,a:p.begin+i,b:p.begin+i+cached.text.length});i=p.text.indexOf(cached.text,i+1);}}if(candidates.length===1)return candidates[0];throw Error('Cannot map rendered selection uniquely. Select in Source mode.');}
  if(a!==b&&visible)return {doc,a,b};
  if(touching.length===1&&a>=touching[0].begin&&a<=touching[0].finish){const p=touching[0];return {doc,a:p.begin,b:p.finish};}return null;}
 
